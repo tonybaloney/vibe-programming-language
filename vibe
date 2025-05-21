@@ -1,0 +1,54 @@
+#!/bin/bash
+# filepath: /home/anthonyshaw/repos/new-programming-language/vibe
+
+# Command-line wrapper for the Vibe Language compiler
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Display help if no arguments or help requested
+if [ "$1" == "-h" ] || [ "$1" == "--help" ] || [ -z "$1" ]; then
+    echo "Vibe Programming Language"
+    echo "Usage: vibe [command] [options] [file]"
+    echo
+    echo "Commands:"
+    echo "  compile   Compile a .vpl file to executable (default if not specified)"
+    echo "  run       Run a .vpl file using the interpreter"
+    echo "  help      Show this help message"
+    echo
+    echo "Options for compile:"
+    echo "  -o, --output NAME      Specify output name"
+    echo "  -b, --backend TYPE     Compiler backend (native, simple, llvm)"
+    echo "  -v, --verbose          Show verbose output"
+    echo "  --keep-temp            Keep temporary files"
+    echo
+    echo "Examples:"
+    echo "  vibe compile program.vpl -o program"
+    echo "  vibe run program.vpl"
+    exit 0
+fi
+
+# Parse command
+COMMAND="compile"  # Default command
+if [ "$1" == "compile" ] || [ "$1" == "run" ] || [ "$1" == "help" ]; then
+    COMMAND="$1"
+    shift
+fi
+
+# Execute appropriate script based on command
+case "$COMMAND" in
+    "compile")
+        python3 "$SCRIPT_DIR/src/vibe_compiler.py" "$@"
+        ;;
+    "run")
+        python3 "$SCRIPT_DIR/src/main.py" "$@"
+        ;;
+    "help")
+        "$0" --help
+        ;;
+    *)
+        echo "Unknown command: $COMMAND"
+        echo "Use 'vibe help' to see available commands"
+        exit 1
+        ;;
+esac

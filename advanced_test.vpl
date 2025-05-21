@@ -1,0 +1,14 @@
+// Advanced Vibe Language test program
+// Shows multiple statements and string concatenation
+
+// Define some variables
+greeting ➡️ "Hello"
+name ➡️ "Vibe Programmer"
+punctuation ➡️ "!"
+
+// Concatenate strings and print
+message ➡️ greeting + " " + name + punctuation
+holla message
+
+// Direct output without variable
+holla "Compiled with " + "Vibe Compiler" + " for ARM64"

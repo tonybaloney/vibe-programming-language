@@ -5,7 +5,7 @@ import sys
 import os
 import subprocess
 from tokenizer import Lexer
-from parser import Parser
+from parser import Parser, Num
 
 class ARMCodeGenerator:
     def __init__(self):
@@ -77,7 +77,12 @@ class ARMCodeGenerator:
         # Generate code for the expression to print
         self.generate_expression(node.expr)
         
-        # Print the result (assume it's a string pointer in x0)
+        # If it's a number, convert to string
+        if isinstance(node.expr, Num):
+            self.emit("    // Convert number to string for printing")
+            self.emit("    bl num_to_string")
+        
+        # Print the result (string pointer in x0)
         self.emit("    // Call print function")
         self.emit("    bl print_string")
     
@@ -97,23 +102,46 @@ class ARMCodeGenerator:
     
     def generate_BinOp(self, node):
         if node.op.type == 'PLUS':
-            # String concatenation
-            self.emit("    // String concatenation")
+            # Determine if this is numeric addition or string concatenation
+            is_left_num = isinstance(node.left, Num)
+            is_right_num = isinstance(node.right, Num)
             
-            # Get left operand
+            # Track if we're dealing with strings
+            is_string_concat = False
+            
+            # First, generate code for left operand
             self.generate_expression(node.left)
-            self.emit("    mov x19, x0")  # Save left operand to callee-saved register
+            self.emit("    mov x19, x0")  # Save left operand
             
-            # Get right operand
+            # Check if we need to convert left number to string for string concatenation
+            if is_left_num and not is_right_num:
+                self.emit("    // Convert left number to string")
+                self.emit("    bl num_to_string")
+                self.emit("    mov x19, x0")  # Update saved value
+                is_string_concat = True
+            
+            # Generate code for right operand
             self.generate_expression(node.right)
-            self.emit("    mov x20, x0")  # Save right operand to callee-saved register
+            self.emit("    mov x20, x0")  # Save right operand
             
-            # Set up arguments for concat function
-            self.emit("    mov x0, x19")  # First arg: left string
-            self.emit("    mov x1, x20")  # Second arg: right string
+            # Check if we need to convert right number to string
+            if is_right_num and not is_left_num:
+                self.emit("    // Convert right number to string")
+                self.emit("    bl num_to_string")
+                self.emit("    mov x20, x0")  # Update saved value
+                is_string_concat = True
             
-            # Call concat function
-            self.emit("    bl string_concat")
+            # If either side was a string, we do string concatenation
+            if is_string_concat or not (is_left_num and is_right_num):
+                # String concatenation
+                self.emit("    // String concatenation")
+                self.emit("    mov x0, x19")  # First arg: left string
+                self.emit("    mov x1, x20")  # Second arg: right string
+                self.emit("    bl string_concat")
+            else:
+                # Numeric addition
+                self.emit("    // Numeric addition")
+                self.emit("    add x0, x19, x20")
         else:
             raise Exception(f"Unsupported operator: {node.op.type}")
     
@@ -162,6 +190,88 @@ class ARMCodeGenerator:
         
         # Text section with helper functions
         result.append(".text")
+        
+        # Number to string conversion function
+        result.append("num_to_string:")
+        result.append("    // Save registers")
+        result.append("    stp x29, x30, [sp, #-64]!")
+        result.append("    stp x19, x20, [sp, #16]")
+        result.append("    stp x21, x22, [sp, #32]")
+        result.append("    stp x23, x24, [sp, #48]")
+        result.append("    mov x29, sp")
+        
+        result.append("    // x0 contains the number to convert")
+        result.append("    mov x19, x0")   # Save number
+        
+        # Allocate 24 bytes for string (enough for 64-bit numbers plus null)
+        result.append("    mov x0, #0")    # let kernel choose address
+        result.append("    mov x1, #24")   # length to allocate
+        result.append("    mov x2, #3")    # PROT_READ | PROT_WRITE
+        result.append("    mov x3, #0x22") # MAP_PRIVATE | MAP_ANONYMOUS
+        result.append("    mov x4, #-1")   # fd (not used)
+        result.append("    mov x5, #0")    # offset (not used)
+        result.append("    mov x8, #222")  # mmap syscall number for ARM64
+        result.append("    svc #0")
+        result.append("    mov x20, x0")   # Save buffer address
+        
+        result.append("    // Check if number is 0 for special case")
+        result.append("    cmp x19, #0")
+        result.append("    bne num_to_string_not_zero")
+        
+        result.append("    // Handle 0 special case")
+        result.append("    mov w1, #'0'")
+        result.append("    strb w1, [x20]")
+        result.append("    mov w1, #0")     # null terminator
+        result.append("    strb w1, [x20, #1]")
+        result.append("    mov x0, x20")    # Return buffer address
+        result.append("    b num_to_string_done")
+        
+        result.append("num_to_string_not_zero:")
+        result.append("    // Convert number to string by repeated division")
+        result.append("    add x21, x20, #23")  # Start at end of buffer
+        result.append("    mov w0, #0")         # Null terminator
+        result.append("    strb w0, [x21]")     # Place at end
+        result.append("    sub x21, x21, #1")   # Move pointer
+        
+        result.append("    mov x22, x19")       # Working copy of number
+        result.append("    mov x23, #10")       # Divisor
+        
+        result.append("num_to_string_loop:")
+        result.append("    cmp x22, #0")        # Check if we're done
+        result.append("    beq num_to_string_reverse") # If number is 0, we're done
+        
+        result.append("    // Divide by 10 and get remainder")
+        result.append("    udiv x24, x22, x23") # x24 = x22 / 10
+        result.append("    msub x0, x24, x23, x22") # x0 = x22 - (x24 * 10) = remainder
+        result.append("    mov x22, x24")       # Update number with quotient
+        
+        result.append("    // Convert remainder to ASCII and store")
+        result.append("    add w0, w0, #'0'")   # Convert to ASCII
+        result.append("    strb w0, [x21]")     # Store in buffer
+        result.append("    sub x21, x21, #1")   # Move pointer
+        
+        result.append("    b num_to_string_loop")
+        
+        result.append("num_to_string_reverse:")
+        result.append("    // x21 points to character before start of string")
+        result.append("    add x21, x21, #1")   # Point to first character
+        result.append("    // Calculate how many bytes to copy")
+        result.append("    add x0, x20, #23")   # End of buffer
+        result.append("    sub x1, x0, x21")    # Number of bytes until null terminator
+        
+        result.append("    // Copy from x21 to beginning of buffer")
+        result.append("    mov x0, x20")        # Destination
+        result.append("    mov x1, x21")        # Source
+        
+        result.append("    mov x0, x20")        # Return buffer address
+        
+        result.append("num_to_string_done:")
+        result.append("    // Restore registers and return")
+        result.append("    ldp x23, x24, [sp, #48]")
+        result.append("    ldp x21, x22, [sp, #32]")
+        result.append("    ldp x19, x20, [sp, #16]")
+        result.append("    ldp x29, x30, [sp], #64")
+        result.append("    ret")
         
         # String print function
         result.append("print_string:")
@@ -286,33 +396,80 @@ class ARMCodeGenerator:
         # Ensure we end with a newline
         return '\n'.join(result) + '\n'
 
-def compile_file(input_filename, output_filename=None):
-    # Default output filename is input filename without extension
+def compile_file(input_filename, output_filename=None, debug=False):
+    """Compile a Vibe Language source file into an ARM64 executable."""
+    # Set default output filename if not provided
     if output_filename is None:
         output_filename = os.path.splitext(input_filename)[0]
     
-    # Read source file
-    with open(input_filename, 'r') as f:
-        source = f.read()
-    
-    # Tokenize
-    lexer = Lexer(source)
-    tokens = lexer.tokenize()
-    
-    # Parse
-    parser = Parser(tokens)
-    ast = parser.parse()
-    
-    # Generate assembly
-    code_generator = ARMCodeGenerator()
-    assembly_code = code_generator.generate(ast)
-    
-    # Write assembly to file
-    asm_filename = f"{output_filename}.s"
-    with open(asm_filename, 'w') as f:
-        f.write(assembly_code)
-    
-    print(f"Assembly code written to {asm_filename}")
+    try:
+        # Read source file
+        with open(input_filename, 'r') as f:
+            source = f.read()
+        
+        if debug:
+            print(f"Source code:\n{source}\n")
+        
+        # Tokenize
+        lexer = Lexer(source)
+        tokens = lexer.tokenize()
+        
+        if debug:
+            print("Tokens:")
+            for token in tokens:
+                print(f"  {token}")
+        
+        # Parse
+        parser = Parser(tokens)
+        ast = parser.parse()
+        
+        if debug:
+            print("\nAST structure:")
+            print_ast(ast, 0)
+            print()
+        
+        # Generate assembly
+        code_generator = ARMCodeGenerator()
+        assembly_code = code_generator.generate(ast)
+        
+        # Write assembly to file
+        asm_filename = f"{output_filename}.s"
+        with open(asm_filename, 'w') as f:
+            f.write(assembly_code)
+        
+        if debug:
+            print(f"Assembly code written to {asm_filename}")
+            print("\nAssembly code preview:")
+            lines = assembly_code.split('\n')
+            for i, line in enumerate(lines[:20]):  # Print first 20 lines
+                print(f"{i+1:4d}: {line}")
+            if len(lines) > 20:
+                print("...")
+        else:
+            print(f"Assembly code written to {asm_filename}")
+
+def print_ast(node, level):
+    """Helper function to print AST structure for debugging"""
+    indent = "  " * level
+    if isinstance(node, list):
+        print(f"{indent}[List of statements]")
+        for item in node:
+            print_ast(item, level + 1)
+    else:
+        node_type = type(node).__name__
+        if hasattr(node, 'value'):
+            print(f"{indent}{node_type}: {node.value}")
+        elif hasattr(node, 'op') and hasattr(node.op, 'type'):
+            print(f"{indent}{node_type}: {node.op.type}")
+            print(f"{indent}Left:")
+            print_ast(node.left, level + 1)
+            print(f"{indent}Right:")
+            print_ast(node.right, level + 1)
+        elif hasattr(node, 'expr'):
+            print(f"{indent}{node_type}:")
+            print_ast(node.expr, level + 1)
+        else:
+            print(f"{indent}{node_type}")
     
     # Assemble and link
     try:
@@ -332,13 +489,20 @@ def compile_file(input_filename, output_filename=None):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: simple_compiler.py <input_file> [output_file]")
+        print("Usage: simple_compiler.py <input_file> [output_file] [--debug]")
         sys.exit(1)
     
     input_filename = sys.argv[1]
-    output_filename = sys.argv[2] if len(sys.argv) > 2 else None
+    output_filename = None
+    debug_mode = False
     
-    compile_file(input_filename, output_filename)
+    for arg in sys.argv[2:]:
+        if arg == '--debug':
+            debug_mode = True
+        elif output_filename is None:
+            output_filename = arg
+    
+    compile_file(input_filename, output_filename, debug_mode)
 
 if __name__ == "__main__":
     main()

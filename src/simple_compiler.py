@@ -447,6 +447,10 @@ def compile_file(input_filename, output_filename=None, debug=False):
                 print("...")
         else:
             print(f"Assembly code written to {asm_filename}")
+    except Exception as e:
+        print(f"Error during compilation: {e}")
+        sys.exit(1)
+
 
 def print_ast(node, level):
     """Helper function to print AST structure for debugging"""

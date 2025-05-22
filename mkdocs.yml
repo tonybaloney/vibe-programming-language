@@ -1,0 +1,16 @@
+site_name: Vibe Programming Language
+nav:
+  - Home: index.md
+  - Learn Vibe: docs/learn-vibe.md
+  - Usage: README.md
+
+theme:
+  name: material
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - admonition
+  - codehilite:
+      guess_lang: false
+  - pymdownx.superfences

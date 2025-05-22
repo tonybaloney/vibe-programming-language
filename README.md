@@ -1,3 +1,7 @@
+> [!NOTE]
+> This repository was "vibe coded" live on stream at Microsoft Build 2025 in 90 minutes.
+> Everything in this repo is preserved from the original recording. https://www.youtube.com/live/67LKcINZTLk?si=asKpKAxDFUFHLNb1&t=23785
+
 # Vibe Programming Language
 
 A simple programming language with both interpreter and compiler options.
